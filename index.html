@@ -1,0 +1,1139 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lluvia de Absurdidades EXTREMA v2</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #222; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+        canvas { cursor: default; border: 2px solid #111; }
+        audio { display: none; }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <audio id="gameMusic" loop>
+        <source src="data:audio/mpeg;base64,[INSERTE_AQUÍ_LA_CADENA_BASE64_DE_NOBODY.MP3]" type="audio/mpeg">
+        Tu navegador no soporta el elemento de audio.
+    </audio>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameMusic = document.getElementById('gameMusic');
+
+        canvas.width = 480;
+        canvas.height = 640;
+
+        const gameImages = {};
+        let imagesToLoad = 0;
+        let imagesLoaded = 0;
+
+        function cargarImagen(key, src) {
+            imagesToLoad++;
+            gameImages[key] = new Image();
+            gameImages[key].onload = () => {
+                imagesLoaded++;
+                console.log(`Imagen cargada: ${key} (${imagesLoaded}/${imagesToLoad})`);
+                if (imagesLoaded === imagesToLoad) {
+                    console.log("¡Todas las imágenes cargadas! Iniciando juego...");
+                    inicializarJuegoYLanzarBucle();
+                }
+            };
+            gameImages[key].onerror = () => { 
+                console.error(`Error cargando imagen ${key} desde ${src}`); 
+                imagesLoaded++;
+                if (imagesLoaded === imagesToLoad) { 
+                    console.warn("Algunas imágenes no cargaron, iniciando con fallbacks."); 
+                    inicializarJuegoYLanzarBucle(); 
+                }
+            };
+            gameImages[key].src = src;
+        }
+
+        function precargarImagenes() {
+            console.log("Precargando imágenes...");
+            cargarImagen('player', 'player.png');
+            cargarImagen('platano', 'platano.png');
+            cargarImagen('sombrero', 'sombrero.png');
+            cargarImagen('gallina', 'gallina.png');
+            cargarImagen('taza', 'taza.png');
+            cargarImagen('zapato', 'zapato.png');
+            cargarImagen('escudo', 'escudo_powerup.png');
+            cargarImagen('ralentizador', 'ralentizador_powerup.png');
+            cargarImagen('disparador', 'disparador_powerup.png');
+            cargarImagen('proyectil', 'proyectil.png');
+            cargarImagen('boomerang', 'boomerang.png'); 
+        }
+
+        let personaje;
+        let teclasPresionadas = {};
+        let objetosCayendo = [];
+        const tiposDeObjetos = ['platano', 'sombrero', 'gallina', 'taza', 'zapato'];
+        let intervaloCreacionObjetos;
+        let contadorCreacionObjetos;
+        let puntuacion;
+        let highScore = (typeof window !== 'undefined' && window.localStorage && localStorage.getItem('highScore')) ? parseInt(localStorage.getItem('highScore')) : 0;
+        let botonReinicio;
+        let velocidadBaseObjetos; 
+
+        let boomerangsCayendo = [];
+        let enemigosEspeciales = [];
+        let intervaloCreacionBoomerang;
+        let contadorCreacionBoomerang;
+        const COLOR_BOOMERANG = '#900000'; 
+        const PUNTOS_POR_DESTRUCCION_BOOMERANG = 25;
+
+        let powerUpsCayendo = [];
+        const tipoPowerUpEscudo = 'escudo';
+        const tipoPowerUpRalentizador = 'ralentizador';
+        const tipoPowerUpDisparador = 'disparador';
+        const tipoPowerUpEspecial = 'especial';
+        let intervaloCreacionPowerUp = 320; 
+        let contadorCreacionPowerUp = 0;
+
+        let escudoActivo = false; let duracionEscudo = 280; let contadorEscudo = 0;
+        let ralentizadorActivo = false; let duracionRalentizador = 220; let contadorRalentizador = 0;
+        let factorRalentizacion = 0.45; 
+        let disparadorActivo = false; let duracionDisparador = 400; let contadorDisparador = 0;
+
+        let proyectiles = [];
+        const VELOCIDAD_PROYECTIL = 10; 
+        const PUNTOS_POR_DESTRUCCION = 8;
+        const tipoProyectilEnemigo = 'enemigo_proyectil';
+
+        let mouseX = 0; let mouseY = 0;
+        let frameJuego = 0;
+        let dashCooldown = 0;
+        const DASH_COOLDOWN_TIME = 90; // 1.5 seconds at 60 FPS
+        const DASH_DISTANCE = 100;
+
+        const ANCHO_PERSONAJE = 40; const ALTO_PERSONAJE = 40;
+        const ANCHO_OBJETO_DEFAULT = 30; const ALTO_OBJETO_DEFAULT = 30;
+        const ANCHO_POWERUP = 30; const ALTO_POWERUP = 30;
+        const ANCHO_PROYECTIL = 8; const ALTO_PROYECTIL = 15;
+        const ANCHO_BOOMERANG = 35; const ALTO_BOOMERANG = 20;
+        const ANCHO_ENEMIGO_ESPECIAL = 40; const ALTO_ENEMIGO_ESPECIAL = 40;
+
+        // Nuevas variables para gráficos y música
+        let nubes = [];
+        let particulas = [];
+        let vibracionContador = 0;
+        let vibracionOffsetX = 0;
+        let vibracionOffsetY = 0;
+        let dashTrail = [];
+        let musicPlaying = false;
+        let lastMusicToggle = 0; // Para debounce
+        const MUSIC_TOGGLE_DEBOUNCE = 500; // 500ms de espera entre toggles
+
+        function inicializarJuego() {
+            personaje = {
+                x: canvas.width / 2 - ANCHO_PERSONAJE / 2,
+                y: canvas.height - ALTO_PERSONAJE - 50,
+                width: ANCHO_PERSONAJE,
+                height: ALTO_PERSONAJE,
+                speed: 5.5,
+                vida: 3,
+                estaVivo: true,
+                spriteKey: 'player'
+            };
+            teclasPresionadas = {};
+            objetosCayendo = [];
+            boomerangsCayendo = []; 
+            enemigosEspeciales = [];
+            velocidadBaseObjetos = 1.5; 
+            intervaloCreacionObjetos = 70; 
+            contadorCreacionObjetos = 0;
+            frameJuego = 0;
+            dashCooldown = 0;
+
+            intervaloCreacionBoomerang = 450; 
+            contadorCreacionBoomerang = 0;
+
+            puntuacion = 0;
+            highScore = (typeof window !== 'undefined' && window.localStorage && localStorage.getItem('highScore')) ? parseInt(localStorage.getItem('highScore')) : 0;
+            botonReinicio = null;
+            
+            powerUpsCayendo = [];
+            escudoActivo = false; contadorEscudo = 0;
+            ralentizadorActivo = false; contadorRalentizador = 0;
+            disparadorActivo = false; contadorDisparador = 0;
+            proyectiles = [];
+            canvas.style.cursor = 'default';
+
+            // Inicializar nubes
+            nubes = [];
+            for (let i = 0; i < 5; i++) {
+                nubes.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * (canvas.height / 2),
+                    radius: 20 + Math.random() * 30,
+                    speed: 0.2 + Math.random() * 0.3
+                });
+            }
+            particulas = [];
+            vibracionContador = 0;
+            dashTrail = [];
+
+            // Configurar música (sin reproducir automáticamente)
+            gameMusic.volume = 0.5;
+            musicPlaying = false;
+        }
+
+        function inicializarJuegoYLanzarBucle() { inicializarJuego(); dibujar(); }
+
+        document.addEventListener('keydown', function(evento) { 
+            if (personaje.estaVivo) { 
+                teclasPresionadas[evento.key.toLowerCase()] = true; 
+                if (evento.key === ' ' && disparadorActivo) crearProyectil(); 
+                if (evento.key.toLowerCase() === 'm') { // Control de música con 'M'
+                    const now = Date.now();
+                    if (now - lastMusicToggle < MUSIC_TOGGLE_DEBOUNCE) return; // Debounce
+                    lastMusicToggle = now;
+                    if (musicPlaying) {
+                        gameMusic.pause();
+                        musicPlaying = false;
+                        console.log("Música pausada");
+                    } else {
+                        gameMusic.play().catch(error => {
+                            console.error("Error al reproducir la música:", error);
+                        });
+                        musicPlaying = true;
+                        console.log("Música reanudada");
+                    }
+                }
+            } 
+        });
+        document.addEventListener('keyup', function(evento) { delete teclasPresionadas[evento.key.toLowerCase()]; });
+        canvas.addEventListener('mousemove', function(evento) { 
+            const rect = canvas.getBoundingClientRect(); 
+            mouseX = evento.clientX - rect.left; 
+            mouseY = evento.clientY - rect.top; 
+        });
+        canvas.addEventListener('mousedown', function(evento) { 
+            if (!personaje.estaVivo && botonReinicio && mouseX > botonReinicio.x && mouseX < botonReinicio.x + botonReinicio.width && mouseY > botonReinicio.y && mouseY < botonReinicio.y + botonReinicio.height) inicializarJuego(); 
+        });
+
+        function moverPersonaje() { 
+            let dashEjecutado = false;
+            if (dashCooldown <= 0) {
+                if ((teclasPresionadas['arrowleft'] || teclasPresionadas['a']) && teclasPresionadas['shift']) {
+                    dashTrail.push({ x: personaje.x, y: personaje.y, alpha: 0.8 });
+                    personaje.x -= DASH_DISTANCE;
+                    dashCooldown = DASH_COOLDOWN_TIME;
+                    dashEjecutado = true;
+                    console.log("Dash izquierda ejecutado");
+                } else if ((teclasPresionadas['arrowright'] || teclasPresionadas['d']) && teclasPresionadas['shift']) {
+                    dashTrail.push({ x: personaje.x, y: personaje.y, alpha: 0.8 });
+                    personaje.x += DASH_DISTANCE;
+                    dashCooldown = DASH_COOLDOWN_TIME;
+                    dashEjecutado = true;
+                    console.log("Dash derecha ejecutado");
+                }
+            }
+            if (!dashEjecutado) {
+                if (teclasPresionadas['arrowleft'] || teclasPresionadas['a']) {
+                    personaje.x -= personaje.speed;
+                }
+                if (teclasPresionadas['arrowright'] || teclasPresionadas['d']) {
+                    personaje.x += personaje.speed;
+                }
+            }
+            if (personaje.x < 0) personaje.x = 0;
+            if (personaje.x > canvas.width - personaje.width) personaje.x = canvas.width - personaje.width;
+            if (dashCooldown > 0) dashCooldown--;
+        }
+
+        function crearObjeto() { 
+            const tipoAleatorio = tiposDeObjetos[Math.floor(Math.random() * tiposDeObjetos.length)]; 
+            const xAleatoria = Math.random() * (canvas.width - ANCHO_OBJETO_DEFAULT); 
+            const velocidadAleatoria = Math.random() * velocidadBaseObjetos + velocidadBaseObjetos; 
+            objetosCayendo.push({ tipo: tipoAleatorio, x: xAleatoria, y: -ALTO_OBJETO_DEFAULT, width: ANCHO_OBJETO_DEFAULT, height: ALTO_OBJETO_DEFAULT, velocidadOriginal: velocidadAleatoria, haPasado: false }); 
+        }
+
+        function actualizarObjetos() {
+            if (!personaje.estaVivo) return;
+            for (let i = objetosCayendo.length - 1; i >= 0; i--) {
+                let objeto = objetosCayendo[i];
+                let velocidadActual = objeto.velocidadOriginal;
+                if (ralentizadorActivo) velocidadActual *= factorRalentizacion;
+                objeto.y += velocidadActual;
+                if (objeto.y > personaje.y + personaje.height && !objeto.haPasado) { 
+                    puntuacion += Math.floor(objeto.velocidadOriginal * 2.5); 
+                    objeto.haPasado = true; 
+                }
+                if (objeto.y > canvas.height) objetosCayendo.splice(i, 1);
+            }
+        }
+
+        function dibujarFondo() {
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            const t = (Math.sin(frameJuego * 0.01) + 1) / 2;
+            gradient.addColorStop(0, `hsl(200, 70%, ${50 + t * 10}%)`);
+            gradient.addColorStop(1, `hsl(200, 70%, ${20 + t * 10}%)`);
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            nubes.forEach(nube => {
+                nube.x += nube.speed;
+                if (nube.x > canvas.width + nube.radius) nube.x = -nube.radius;
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.beginPath();
+                ctx.arc(nube.x, nube.y, nube.radius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function dibujarObjeto(objeto) { 
+            if (gameImages[objeto.tipo] && gameImages[objeto.tipo].complete && gameImages[objeto.tipo].naturalHeight !== 0) {
+                ctx.drawImage(gameImages[objeto.tipo], objeto.x, objeto.y, objeto.width, objeto.height); 
+            } else { 
+                ctx.save();
+                ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+                ctx.shadowBlur = 5;
+                ctx.shadowOffsetX = 2;
+                ctx.shadowOffsetY = 2;
+                ctx.fillStyle = `hsl(${tiposDeObjetos.indexOf(objeto.tipo) * 60}, 50%, 50%)`;
+                ctx.beginPath();
+                if (objeto.tipo === 'platano') {
+                    ctx.arc(objeto.x + objeto.width / 2, objeto.y + objeto.height / 2, objeto.width / 2, 0, Math.PI * 2);
+                } else {
+                    ctx.fillRect(objeto.x, objeto.y, objeto.width, objeto.height);
+                }
+                ctx.fill();
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.fillStyle = 'white';
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 14px Verdana';
+                ctx.fillText(objeto.tipo.charAt(0).toUpperCase(), objeto.x + objeto.width / 2, objeto.y + objeto.height / 2 + 5);
+                ctx.textAlign = 'start';
+                ctx.restore();
+            }
+        }
+
+        function crearBoomerangOEnemigo() {
+            if (puntuacion >= 750 && Math.random() < 0.1) {
+                crearEnemigoEspecial();
+                console.log("Enemigo especial creado");
+            } else {
+                const xAleatoria = Math.random() < 0.5 ? -ANCHO_BOOMERANG - 10 : canvas.width + 10;
+                const yAleatoria = Math.random() * (canvas.height / 3);
+                let velX = (2.0 + Math.random() * 1.0) * (xAleatoria < 0 ? 1 : -1);
+                let velY = velocidadBaseObjetos + Math.random() * 1.0;
+                boomerangsCayendo.push({
+                    x: xAleatoria, y: yAleatoria, width: ANCHO_BOOMERANG, height: ALTO_BOOMERANG,
+                    velocidadXOriginal: velX, velocidadYOriginal: velY,
+                    spriteKey: 'boomerang', color: COLOR_BOOMERANG,
+                    rotacion: 0
+                });
+            }
+        }
+
+        function crearEnemigoEspecial() {
+            const xAleatoria = Math.random() * (canvas.width - ANCHO_ENEMIGO_ESPECIAL);
+            const yAleatoria = -ALTO_ENEMIGO_ESPECIAL;
+            enemigosEspeciales.push({
+                x: xAleatoria, y: yAleatoria, width: ANCHO_ENEMIGO_ESPECIAL, height: ALTO_ENEMIGO_ESPECIAL,
+                velocidad: VELOCIDAD_PROYECTIL / 4,
+                contador: 0
+            });
+        }
+
+        function actualizarEnemigosEspeciales() {
+            if (!personaje.estaVivo) return;
+            for (let i = enemigosEspeciales.length - 1; i >= 0; i--) {
+                let enemigo = enemigosEspeciales[i];
+                let velocidadActual = enemigo.velocidad;
+                if (ralentizadorActivo) velocidadActual *= factorRalentizacion;
+                enemigo.y += velocidadActual;
+                enemigo.contador++;
+                if (enemigo.contador >= 120) {
+                    const numProyectiles = 5;
+                    const anguloTotal = Math.PI / 3;
+                    for (let j = 0; j < numProyectiles; j++) {
+                        const angulo = -anguloTotal / 2 + (anguloTotal / (numProyectiles - 1)) * j;
+                        proyectiles.push({
+                            x: enemigo.x + enemigo.width / 2,
+                            y: enemigo.y + enemigo.height,
+                            width: ANCHO_PROYECTIL,
+                            height: ALTO_PROYECTIL,
+                            velocidadX: Math.sin(angulo) * VELOCIDAD_PROYECTIL,
+                            velocidadY: Math.cos(angulo) * VELOCIDAD_PROYECTIL,
+                            tipo: tipoProyectilEnemigo
+                        });
+                    }
+                    enemigo.contador = 0;
+                    console.log("Enemigo especial disparó 5 proyectiles");
+                }
+                if (enemigo.y > canvas.height) enemigosEspeciales.splice(i, 1);
+            }
+        }
+
+        function dibujarEnemigoEspecial(enemigo) {
+            ctx.save();
+            const scale = 1 + Math.sin(frameJuego * 0.1) * 0.05;
+            ctx.translate(enemigo.x + enemigo.width / 2, enemigo.y + enemigo.height / 2);
+            ctx.scale(scale, scale);
+            ctx.translate(-enemigo.width / 2, -enemigo.height / 2);
+            ctx.fillStyle = 'red';
+            ctx.fillRect(0, 0, enemigo.width, enemigo.height);
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(0, 0, enemigo.width, enemigo.height);
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 20px Verdana';
+            ctx.fillText('X', enemigo.width / 2, enemigo.height / 2 + 7);
+            ctx.textAlign = 'start';
+            ctx.restore();
+        }
+
+        function actualizarBoomerangs() {
+            if (!personaje.estaVivo) return;
+            for (let i = boomerangsCayendo.length - 1; i >= 0; i--) {
+                let boom = boomerangsCayendo[i];
+                let currentVelX = boom.velocidadXOriginal;
+                let currentVelY = boom.velocidadYOriginal;
+                if (ralentizadorActivo) { currentVelX *= factorRalentizacion; currentVelY *= factorRalentizacion; }
+                boom.x += currentVelX; boom.y += currentVelY;
+                boom.rotacion += 0.1;
+                if (boom.x + boom.width > canvas.width || boom.x < 0) {
+                    boom.velocidadXOriginal *= -1;
+                    if (boom.x < 0) boom.x = 0;
+                    if (boom.x + boom.width > canvas.width) boom.x = canvas.width - boom.width;
+                }
+                if (boom.y > canvas.height + boom.height + 20) boomerangsCayendo.splice(i, 1);
+            }
+        }
+
+        function dibujarBoomerang(boomerang) { 
+            if (gameImages[boomerang.spriteKey] && gameImages[boomerang.spriteKey].complete && gameImages[boomerang.spriteKey].naturalHeight !== 0) {
+                ctx.save();
+                ctx.translate(boomerang.x + boomerang.width / 2, boomerang.y + boomerang.height / 2);
+                ctx.rotate(boomerang.rotacion);
+                ctx.drawImage(gameImages[boomerang.spriteKey], -boomerang.width / 2, -boomerang.height / 2, boomerang.width, boomerang.height);
+                ctx.restore();
+            } else { 
+                ctx.save();
+                ctx.translate(boomerang.x + boomerang.width / 2, boomerang.y + boomerang.height / 2);
+                ctx.rotate(boomerang.rotacion);
+                ctx.fillStyle = boomerang.color;
+                ctx.beginPath();
+                ctx.arc(0, 0, boomerang.width / 2, 0, Math.PI, false);
+                ctx.lineTo(-boomerang.width / 4, -boomerang.height / 4);
+                ctx.lineTo(boomerang.width / 4, -boomerang.height / 4);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
+        function crearPowerUp() { 
+            const xAleatoria = Math.random() * (canvas.width - ANCHO_POWERUP); 
+            const v = 2.5; 
+            let tipo;
+            if (puntuacion >= 1000 && Math.random() < 1/50) {
+                tipo = tipoPowerUpEspecial;
+                console.log("Power-up especial creado");
+            } else {
+                const t = [tipoPowerUpEscudo, tipoPowerUpRalentizador, tipoPowerUpDisparador];
+                tipo = t[Math.floor(Math.random() * t.length)];
+            }
+            powerUpsCayendo.push({ tipo, x: xAleatoria, y: -ALTO_POWERUP, width: ANCHO_POWERUP, height: ALTO_POWERUP, velocidad: v }); 
+        }
+
+        function actualizarPowerUps() { 
+            for (let i = powerUpsCayendo.length - 1; i >= 0; i--) { 
+                powerUpsCayendo[i].y += powerUpsCayendo[i].velocidad; 
+                if (powerUpsCayendo[i].y > canvas.height) powerUpsCayendo.splice(i, 1); 
+            }
+        }
+
+        function dibujarPowerUp(p) { 
+            if (p.tipo === tipoPowerUpEspecial) {
+                ctx.save();
+                const glow = Math.sin(frameJuego * 0.15) * 3;
+                ctx.shadowColor = 'rgba(255, 255, 255, 0.7)';
+                ctx.shadowBlur = 5 + glow;
+                ctx.fillStyle = 'purple';
+                ctx.fillRect(p.x, p.y, p.width, p.height);
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 2 + glow / 2;
+                ctx.strokeRect(p.x, p.y, p.width, p.height);
+                ctx.fillStyle = 'white';
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 20px Verdana';
+                ctx.fillText('Ñ', p.x + p.width / 2, p.y + p.height / 2 + 7);
+                ctx.textAlign = 'start';
+                ctx.restore();
+            } else if (gameImages[p.tipo] && gameImages[p.tipo].complete && gameImages[p.tipo].naturalHeight !== 0) {
+                ctx.drawImage(gameImages[p.tipo], p.x, p.y, p.width, p.height);
+            } else { 
+                ctx.save();
+                ctx.fillStyle = 'purple'; 
+                ctx.fillRect(p.x, p.y, p.width, p.height); 
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(p.x, p.y, p.width, p.height);
+                ctx.fillStyle = 'white';
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 16px Verdana';
+                ctx.fillText(p.tipo.charAt(0).toUpperCase(), p.x + p.width / 2, p.y + p.height / 2 + 5);
+                ctx.textAlign = 'start';
+                ctx.restore();
+            }
+        }
+
+        function crearProyectil() { 
+            if (!disparadorActivo) return;
+            proyectiles.push({ 
+                x: personaje.x + personaje.width / 2 - ANCHO_PROYECTIL / 2, 
+                y: personaje.y, 
+                width: ANCHO_PROYECTIL, 
+                height: ALTO_PROYECTIL, 
+                velocidad: VELOCIDAD_PROYECTIL, 
+                spriteKey: 'proyectil',
+                tipo: 'normal'
+            }); 
+        }
+
+        function actualizarProyectiles() { 
+            for (let i = proyectiles.length - 1; i >= 0; i--) { 
+                let p = proyectiles[i]; 
+                if (p.tipo === tipoProyectilEnemigo) {
+                    p.x += p.velocidadX || 0;
+                    p.y += p.velocidadY || VELOCIDAD_PROYECTIL;
+                } else {
+                    p.y -= p.velocidad;
+                }
+                if (p.y + p.height < 0 || p.y > canvas.height) proyectiles.splice(i, 1);
+            }
+        }
+
+        function dibujarProyectiles() { 
+            proyectiles.forEach(p => { 
+                ctx.save();
+                if (p.tipo === tipoProyectilEnemigo) {
+                    ctx.fillStyle = 'red';
+                    ctx.beginPath();
+                    ctx.ellipse(p.x + p.width / 2, p.y + p.height / 2, p.width / 2, p.height / 2, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+                    ctx.beginPath();
+                    ctx.ellipse(p.x + p.width / 2, p.y + p.height, p.width / 2, p.height, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                } else if (gameImages[p.spriteKey] && gameImages[p.spriteKey].complete && gameImages[p.spriteKey].naturalHeight !== 0) {
+                    ctx.drawImage(gameImages[p.spriteKey], p.x, p.y, p.width, p.height);
+                } else { 
+                    ctx.fillStyle = 'yellow';
+                    ctx.beginPath();
+                    ctx.ellipse(p.x + p.width / 2, p.y + p.height / 2, p.width / 2, p.height / 2, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = 'rgba(255, 255, 0, 0.3)';
+                    ctx.beginPath();
+                    ctx.ellipse(p.x + p.width / 2, p.y + p.height, p.width / 2, p.height, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.restore();
+            }); 
+        }
+
+        function dibujarPersonaje() { 
+            ctx.save();
+            if (gameImages[personaje.spriteKey] && gameImages[personaje.spriteKey].complete && gameImages[personaje.spriteKey].naturalHeight !== 0) {
+                ctx.drawImage(gameImages[personaje.spriteKey], personaje.x, personaje.y, personaje.width, personaje.height); 
+            } else { 
+                ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+                ctx.shadowBlur = 5;
+                ctx.shadowOffsetX = 2;
+                ctx.shadowOffsetY = 2;
+
+                // Cuerpo ovalado con degradado
+                const gradient = ctx.createRadialGradient(
+                    personaje.x + personaje.width / 2, personaje.y + personaje.height / 2, 5,
+                    personaje.x + personaje.width / 2, personaje.y + personaje.height / 2, 15
+                );
+                gradient.addColorStop(0, '#444');
+                gradient.addColorStop(1, '#000');
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.ellipse(personaje.x + personaje.width / 2, personaje.y + personaje.height / 2, 12, 8, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#222';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Ojos grandes
+                ctx.fillStyle = '#FFF';
+                ctx.beginPath();
+                ctx.arc(personaje.x + personaje.width / 2 - 4, personaje.y + personaje.height / 2 - 2, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(personaje.x + personaje.width / 2 + 4, personaje.y + personaje.height / 2 - 2, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(personaje.x + personaje.width / 2 - 4, personaje.y + personaje.height / 2 - 2, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(personaje.x + personaje.width / 2 + 4, personaje.y + personaje.height / 2 - 2, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Patas curvas (8 en total)
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 2;
+                const cx = personaje.x + personaje.width / 2;
+                const cy = personaje.y + personaje.height / 2;
+
+                // Patas izquierda
+                ctx.beginPath();
+                ctx.moveTo(cx - 8, cy - 2);
+                ctx.bezierCurveTo(cx - 15, cy - 10, cx - 20, cy - 15, cx - 18, cy - 20);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(cx - 8, cy + 2);
+                ctx.bezierCurveTo(cx - 15, cy + 10, cx - 20, cy + 15, cx - 18, cy + 20);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(cx - 4, cy - 4);
+                ctx.bezierCurveTo(cx - 12, cy - 12, cx - 18, cy - 18, cx - 16, cy - 25);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(cx - 4, cy + 4);
+                ctx.bezierCurveTo(cx - 12, cy + 12, cx - 18, cy + 18, cx - 16, cy + 25);
+                ctx.stroke();
+
+                // Patas derecha
+                ctx.beginPath();
+                ctx.moveTo(cx + 8, cy - 2);
+                ctx.bezierCurveTo(cx + 15, cy - 10, cx + 20, cy - 15, cx + 18, cy - 20);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(cx + 8, cy + 2);
+                ctx.bezierCurveTo(cx + 15, cy + 10, cx + 20, cy + 15, cx + 18, cy + 20);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(cx + 4, cy - 4);
+                ctx.bezierCurveTo(cx + 12, cy - 12, cx + 18, cy - 18, cx + 16, cy - 25);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(cx + 4, cy + 4);
+                ctx.bezierCurveTo(cx + 12, cy + 12, cx + 18, cy + 18, cx + 16, cy + 25);
+                ctx.stroke();
+            }
+            if (escudoActivo) { 
+                ctx.strokeStyle = 'rgba(255, 255, 0, 0.8)'; 
+                ctx.lineWidth = 5; 
+                ctx.beginPath(); 
+                ctx.arc(personaje.x + personaje.width / 2, personaje.y + personaje.height / 2, personaje.width / 1.5, 0, Math.PI * 2); 
+                ctx.stroke(); 
+                ctx.lineWidth = 1; 
+            } 
+            if (disparadorActivo) { 
+                ctx.fillStyle = 'rgba(255, 100, 0, 0.9)'; 
+                ctx.beginPath(); 
+                ctx.arc(personaje.x + personaje.width / 2, personaje.y - 6, 6, 0, Math.PI * 2); 
+                ctx.fill(); 
+            } 
+            ctx.restore();
+
+            // Dibujar estela de dash
+            dashTrail = dashTrail.filter(t => t.alpha > 0);
+            dashTrail.forEach(t => {
+                ctx.save();
+                ctx.globalAlpha = t.alpha;
+                if (gameImages[personaje.spriteKey] && gameImages[personaje.spriteKey].complete && gameImages[personaje.spriteKey].naturalHeight !== 0) {
+                    ctx.drawImage(gameImages[personaje.spriteKey], t.x, t.y, personaje.width, personaje.height);
+                } else {
+                    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+                    ctx.shadowBlur = 5;
+                    ctx.shadowOffsetX = 2;
+                    ctx.shadowOffsetY = 2;
+
+                    // Cuerpo ovalado con degradado
+                    const gradient = ctx.createRadialGradient(
+                        t.x + personaje.width / 2, t.y + personaje.height / 2, 5,
+                        t.x + personaje.width / 2, t.y + personaje.height / 2, 15
+                    );
+                    gradient.addColorStop(0, 'rgba(68, 68, 68, ' + t.alpha + ')');
+                    gradient.addColorStop(1, 'rgba(0, 0, 0, ' + t.alpha + ')');
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.ellipse(t.x + personaje.width / 2, t.y + personaje.height / 2, 12, 8, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(34, 34, 34, ' + t.alpha + ')';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // Ojos grandes
+                    ctx.fillStyle = 'rgba(255, 255, 255, ' + t.alpha + ')';
+                    ctx.beginPath();
+                    ctx.arc(t.x + personaje.width / 2 - 4, t.y + personaje.height / 2 - 2, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(t.x + personaje.width / 2 + 4, t.y + personaje.height / 2 - 2, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = 'rgba(0, 0, 0, ' + t.alpha + ')';
+                    ctx.beginPath();
+                    ctx.arc(t.x + personaje.width / 2 - 4, t.y + personaje.height / 2 - 2, 1.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(t.x + personaje.width / 2 + 4, t.y + personaje.height / 2 - 2, 1.5, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Patas curvas
+                    ctx.strokeStyle = 'rgba(51, 51, 51, ' + t.alpha + ')';
+                    ctx.lineWidth = 2;
+                    const cx = t.x + personaje.width / 2;
+                    const cy = t.y + personaje.height / 2;
+
+                    ctx.beginPath();
+                    ctx.moveTo(cx - 8, cy - 2);
+                    ctx.bezierCurveTo(cx - 15, cy - 10, cx - 20, cy - 15, cx - 18, cy - 20);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(cx - 8, cy + 2);
+                    ctx.bezierCurveTo(cx - 15, cy + 10, cx - 20, cy + 15, cx - 18, cy + 20);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(cx - 4, cy - 4);
+                    ctx.bezierCurveTo(cx - 12, cy - 12, cx - 18, cy - 18, cx - 16, cy - 25);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(cx - 4, cy + 4);
+                    ctx.bezierCurveTo(cx - 12, cy + 12, cx - 18, cy + 18, cx - 16, cy + 25);
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.moveTo(cx + 8, cy - 2);
+                    ctx.bezierCurveTo(cx + 15, cy - 10, cx + 20, cy - 15, cx + 18, cy - 20);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(cx + 8, cy + 2);
+                    ctx.bezierCurveTo(cx + 15, cy + 10, cx + 20, cy + 15, cx + 18, cy + 20);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(cx + 4, cy - 4);
+                    ctx.bezierCurveTo(cx + 12, cy - 12, cx + 18, cy - 18, cx + 16, cy - 25);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(cx + 4, cy + 4);
+                    ctx.bezierCurveTo(cx + 12, cy + 12, cx + 18, cy + 18, cx + 16, cy + 25);
+                    ctx.stroke();
+                }
+                ctx.restore();
+                t.alpha -= 0.05;
+            });
+        }
+
+        function crearParticulas(x, y) {
+            for (let i = 0; i < 15; i++) {
+                particulas.push({
+                    x: x,
+                    y: y,
+                    radius: 2 + Math.random() * 3,
+                    velocidadX: (Math.random() - 0.5) * 4,
+                    velocidadY: (Math.random() - 0.5) * 4,
+                    alpha: 1
+                });
+            }
+        }
+
+        function actualizarParticulas() {
+            particulas = particulas.filter(p => p.alpha > 0);
+            particulas.forEach(p => {
+                p.x += p.velocidadX;
+                p.y += p.velocidadY;
+                p.alpha -= 0.02;
+            });
+        }
+
+        function dibujarParticulas() {
+            particulas.forEach(p => {
+                ctx.save();
+                ctx.globalAlpha = p.alpha;
+                ctx.fillStyle = 'white';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            });
+        }
+
+        function aplicarVibracion() {
+            if (vibracionContador > 0) {
+                vibracionOffsetX = (Math.random() - 0.5) * 3;
+                vibracionOffsetY = (Math.random() - 0.5) * 3;
+                vibracionContador--;
+            } else {
+                vibracionOffsetX = 0;
+                vibracionOffsetY = 0;
+            }
+        }
+
+        function checkCollision(o1, o2) { 
+            const p = 2; 
+            return (o1.x < o2.x + o2.width - p && o1.x + o1.width > o2.x + p && o1.y < o2.y + o2.height - p && o1.y + o1.height > o2.y + p); 
+        }
+
+        function dibujarVida() { 
+            ctx.save();
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(5, 5, 100, 30);
+            ctx.fillStyle = 'white'; 
+            ctx.strokeStyle = 'black'; 
+            ctx.lineWidth = 3; 
+            ctx.font = 'bold 18px Verdana, Arial, sans-serif'; 
+            const t = 'Vidas: ' + personaje.vida; 
+            ctx.strokeText(t, 10, 25); 
+            ctx.fillText(t, 10, 25); 
+            ctx.restore();
+        }
+
+        function dibujarPuntuacion() { 
+            ctx.save();
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(5, 35, 200, 30);
+            ctx.fillStyle = 'white'; 
+            ctx.strokeStyle = 'black'; 
+            ctx.lineWidth = 3; 
+            ctx.font = 'bold 18px Verdana, Arial, sans-serif'; 
+            const t = 'Puntos: ' + puntuacion + ' | Récord: ' + highScore; 
+            ctx.strokeText(t, 10, 55); 
+            ctx.fillText(t, 10, 55); 
+            ctx.restore();
+        }
+
+        function dibujarDuracionPowerUps() { 
+            ctx.save();
+            ctx.font = '14px Verdana, Arial, sans-serif'; 
+            let yOff = 75; 
+            const lH = 18; 
+            const dTS = (t, x, y) => {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; 
+                ctx.fillText(t, x + 1, y + 1); 
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'; 
+                ctx.fillText(t, x, y);
+            }; 
+            if (escudoActivo) { dTS(`Escudo: ${Math.ceil((duracionEscudo - contadorEscudo) / 60)}s`, 10, yOff); yOff += lH; } 
+            if (ralentizadorActivo) { dTS(`Ralent.: ${Math.ceil((duracionRalentizador - contadorRalentizador) / 60)}s`, 10, yOff); yOff += lH; } 
+            if (disparadorActivo) dTS(`Disparos: ${Math.ceil((duracionDisparador - contadorDisparador) / 60)}s`, 10, yOff); 
+            ctx.restore();
+        }
+
+        function dibujarMensajeMusica() {
+            if (!musicPlaying && personaje.estaVivo) {
+                ctx.save();
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(canvas.width - 200, 5, 195, 30);
+                ctx.fillStyle = 'white';
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 2;
+                ctx.font = 'bold 16px Verdana, Arial, sans-serif';
+                const texto = "Presiona 'M' para música";
+                ctx.strokeText(texto, canvas.width - 195, 25);
+                ctx.fillText(texto, canvas.width - 195, 25);
+                ctx.restore();
+            }
+        }
+
+        function dibujarBotonReinicio() { 
+            const t = 'Reiniciar Juego';
+            ctx.font = 'bold 28px "Impact", Charcoal, sans-serif';
+            const mT = ctx.measureText(t);
+            const aT = mT.width;
+            const alT = 28;
+            const p = 20;
+            botonReinicio = { x: canvas.width / 2 - (aT + 2 * p) / 2, y: canvas.height / 2 + 50, width: aT + 2 * p, height: alT + 2 * p };
+            const gB = ctx.createLinearGradient(botonReinicio.x, botonReinicio.y, botonReinicio.x, botonReinicio.y + botonReinicio.height);
+            gB.addColorStop(0, '#66bb6a');
+            gB.addColorStop(1, '#388e3c');
+            ctx.fillStyle = gB;
+            ctx.strokeStyle = '#2e7d32';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(botonReinicio.x + 10, botonReinicio.y);
+            ctx.lineTo(botonReinicio.x + botonReinicio.width - 10, botonReinicio.y);
+            ctx.quadraticCurveTo(botonReinicio.x + botonReinicio.width, botonReinicio.y, botonReinicio.x + botonReinicio.width, botonReinicio.y + 10);
+            ctx.lineTo(botonReinicio.x + botonReinicio.width, botonReinicio.y + botonReinicio.height - 10);
+            ctx.quadraticCurveTo(botonReinicio.x + botonReinicio.width, botonReinicio.y + botonReinicio.height, botonReinicio.x + botonReinicio.width - 10, botonReinicio.y + botonReinicio.height);
+            ctx.lineTo(botonReinicio.x + 10, botonReinicio.y + botonReinicio.height);
+            ctx.quadraticCurveTo(botonReinicio.x, botonReinicio.y + botonReinicio.height, botonReinicio.x, botonReinicio.y + botonReinicio.height - 10);
+            ctx.lineTo(botonReinicio.x, botonReinicio.y + 10);
+            ctx.quadraticCurveTo(botonReinicio.x, botonReinicio.y, botonReinicio.x + 10, botonReinicio.y);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = "black";
+            ctx.shadowBlur = 3;
+            ctx.shadowOffsetX = 2;
+            ctx.shadowOffsetY = 2;
+            ctx.fillText(t, canvas.width / 2, botonReinicio.y + p + alT / 2);
+            ctx.shadowColor = "transparent";
+            ctx.shadowBlur = 0;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0;
+            ctx.textAlign = 'start';
+            ctx.lineWidth = 1;
+        }
+
+        function dibujarGameOver() { 
+            if (puntuacion > highScore && typeof window !== 'undefined' && window.localStorage) {
+                highScore = puntuacion;
+                localStorage.setItem('highScore', highScore);
+            }
+            // Detener música en Game Over
+            gameMusic.pause();
+            musicPlaying = false;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.font = 'bold 48px "Impact", Charcoal, sans-serif';
+            ctx.fillStyle = '#ff4444';
+            ctx.textAlign = 'center';
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 3;
+            ctx.strokeText('¡GAME OVER!', canvas.width / 2, canvas.height / 2 - 60);
+            ctx.fillText('¡GAME OVER!', canvas.width / 2, canvas.height / 2 - 60);
+            ctx.font = '28px "Verdana", sans-serif';
+            ctx.fillStyle = 'white';
+            ctx.strokeText('Puntuación final: ' + puntuacion, canvas.width / 2, canvas.height / 2);
+            ctx.fillText('Puntuación final: ' + puntuacion, canvas.width / 2, canvas.height / 2);
+            ctx.strokeText('Récord: ' + highScore, canvas.width / 2, canvas.height / 2 + 30);
+            ctx.fillText('Récord: ' + highScore, canvas.width / 2, canvas.height / 2 + 30);
+            dibujarBotonReinicio();
+            ctx.textAlign = 'start';
+            ctx.lineWidth = 1;
+        }
+
+        function dibujar() {
+            ctx.save();
+            ctx.translate(vibracionOffsetX, vibracionOffsetY);
+            ctx.clearRect(-vibracionOffsetX, -vibracionOffsetY, canvas.width, canvas.height);
+            dibujarFondo();
+            if (ralentizadorActivo && personaje.estaVivo) { 
+                ctx.fillStyle = "rgba(0, 100, 255, 0.15)"; 
+                ctx.fillRect(0, 0, canvas.width, canvas.height); 
+            }
+
+            if (personaje.estaVivo) {
+                frameJuego++; 
+                moverPersonaje();
+                
+                contadorCreacionObjetos++;
+                if (contadorCreacionObjetos >= intervaloCreacionObjetos) {
+                    crearObjeto(); 
+                    contadorCreacionObjetos = 0;
+                    if (puntuacion >= 750) {
+                        intervaloCreacionObjetos = Math.max(56, intervaloCreacionObjetos - 0.4);
+                    } else if (intervaloCreacionObjetos > 15) {
+                        intervaloCreacionObjetos -= 0.4;
+                    }
+                }
+                if (frameJuego > 0 && frameJuego % 300 === 0 && velocidadBaseObjetos < 5) velocidadBaseObjetos += 0.25;
+
+                contadorCreacionBoomerang++;
+                if (contadorCreacionBoomerang >= intervaloCreacionBoomerang) {
+                    crearBoomerangOEnemigo(); 
+                    contadorCreacionBoomerang = 0;
+                    if (intervaloCreacionBoomerang > 180) intervaloCreacionBoomerang -= 15; 
+                }
+
+                contadorCreacionPowerUp++;
+                if (contadorCreacionPowerUp >= intervaloCreacionPowerUp) { 
+                    crearPowerUp(); 
+                    contadorCreacionPowerUp = 0; 
+                }
+
+                actualizarObjetos(); 
+                actualizarBoomerangs(); 
+                actualizarEnemigosEspeciales();
+                actualizarPowerUps(); 
+                actualizarProyectiles(); 
+                actualizarParticulas();
+                aplicarVibracion();
+
+                objetosCayendo.forEach(dibujarObjeto);
+                boomerangsCayendo.forEach(dibujarBoomerang);
+                enemigosEspeciales.forEach(dibujarEnemigoEspecial);
+                powerUpsCayendo.forEach(dibujarPowerUp);
+                dibujarProyectiles(); 
+                dibujarPersonaje();
+                dibujarParticulas();
+
+                for (let i = objetosCayendo.length - 1; i >= 0; i--) {
+                    if (checkCollision(personaje, objetosCayendo[i])) {
+                        if (!escudoActivo) {
+                            personaje.vida--;
+                            vibracionContador = 10;
+                        }
+                        objetosCayendo.splice(i, 1);
+                        if (personaje.vida <= 0) { personaje.estaVivo = false; break; }
+                    }
+                }
+                if (personaje.estaVivo) {
+                    for (let i = boomerangsCayendo.length - 1; i >= 0; i--) {
+                        if (checkCollision(personaje, boomerangsCayendo[i])) {
+                            if (!escudoActivo) {
+                                personaje.vida--;
+                                vibracionContador = 10;
+                            }
+                            boomerangsCayendo.splice(i, 1);
+                            if (personaje.vida <= 0) { personaje.estaVivo = false; break; }
+                        }
+                    }
+                    for (let i = enemigosEspeciales.length - 1; i >= 0; i--) {
+                        if (checkCollision(personaje, enemigosEspeciales[i])) {
+                            if (!escudoActivo) {
+                                personaje.vida--;
+                                vibracionContador = 10;
+                            }
+                            enemigosEspeciales.splice(i, 1);
+                            if (personaje.vida <= 0) { personaje.estaVivo = false; break; }
+                        }
+                    }
+                    for (let i = proyectiles.length - 1; i >= 0; i--) {
+                        if (proyectiles[i].tipo === tipoProyectilEnemigo && checkCollision(personaje, proyectiles[i])) {
+                            if (!escudoActivo) {
+                                personaje.vida--;
+                                vibracionContador = 10;
+                            }
+                            proyectiles.splice(i, 1);
+                            if (personaje.vida <= 0) { personaje.estaVivo = false; break; }
+                        }
+                    }
+                }
+                
+                for (let i = proyectiles.length - 1; i >= 0; i--) {
+                    let proyectilActual = proyectiles[i];
+                    if (!proyectilActual || proyectilActual.tipo === tipoProyectilEnemigo) continue;
+
+                    for (let j = objetosCayendo.length - 1; j >= 0; j--) {
+                        if (checkCollision(proyectilActual, objetosCayendo[j])) {
+                            objetosCayendo.splice(j, 1);
+                            proyectiles.splice(i, 1); 
+                            puntuacion += PUNTOS_POR_DESTRUCCION;
+                            proyectilActual = null;
+                            break;
+                        }
+                    }
+
+                    if (!proyectilActual) continue;
+
+                    for (let k = boomerangsCayendo.length - 1; k >= 0; k--) {
+                        if (checkCollision(proyectilActual, boomerangsCayendo[k])) {
+                            boomerangsCayendo.splice(k, 1);
+                            proyectiles.splice(i, 1);
+                            puntuacion += PUNTOS_POR_DESTRUCCION_BOOMERANG;
+                            break;
+                        }
+                    }
+
+                    if (!proyectilActual) continue;
+
+                    for (let k = enemigosEspeciales.length - 1; k >= 0; k--) {
+                        if (checkCollision(proyectilActual, enemigosEspeciales[k])) {
+                            enemigosEspeciales.splice(k, 1);
+                            proyectiles.splice(i, 1);
+                            puntuacion += PUNTOS_POR_DESTRUCCION_BOOMERANG;
+                            break;
+                        }
+                    }
+                }
+
+                for (let i = powerUpsCayendo.length - 1; i >= 0; i--) {
+                    if (checkCollision(personaje, powerUpsCayendo[i])) {
+                        let pUp = powerUpsCayendo[i];
+                        if (pUp.tipo === tipoPowerUpEscudo) { 
+                            escudoActivo = true; 
+                            contadorEscudo = 0; 
+                            ralentizadorActivo = false; 
+                            disparadorActivo = false; 
+                        } else if (pUp.tipo === tipoPowerUpRalentizador) { 
+                            ralentizadorActivo = true; 
+                            contadorRalentizador = 0;
+                        } else if (pUp.tipo === tipoPowerUpDisparador) { 
+                            disparadorActivo = true; 
+                            contadorDisparador = 0; 
+                        } else if (pUp.tipo === tipoPowerUpEspecial) {
+                            crearParticulas(pUp.x + pUp.width / 2, pUp.y + pUp.height / 2);
+                            const numObjetosToRemove = Math.floor(objetosCayendo.length * 0.75);
+                            objetosCayendo = objetosCayendo.slice(0, objetosCayendo.length - numObjetosToRemove);
+                            const numBoomerangsToRemove = Math.floor(boomerangsCayendo.length * 0.75);
+                            boomerangsCayendo = boomerangsCayendo.slice(0, boomerangsCayendo.length - numBoomerangsToRemove);
+                            const numEnemigosToRemove = Math.floor(enemigosEspeciales.length * 0.75);
+                            enemigosEspeciales = enemigosEspeciales.slice(0, enemigosEspeciales.length - numEnemigosToRemove);
+                            console.log("Power-up especial activado: 75% de objetos, boomerangs y enemigos especiales eliminados");
+                        }
+                        powerUpsCayendo.splice(i, 1);
+                    }
+                }
+
+                if (escudoActivo) { contadorEscudo++; if (contadorEscudo >= duracionEscudo) escudoActivo = false; }
+                if (ralentizadorActivo) { contadorRalentizador++; if (contadorRalentizador >= duracionRalentizador) ralentizadorActivo = false; }
+                if (disparadorActivo) { contadorDisparador++; if (contadorDisparador >= duracionDisparador) disparadorActivo = false; }
+                
+                dibujarVida(); 
+                dibujarPuntuacion(); 
+                dibujarDuracionPowerUps(); 
+                dibujarMensajeMusica(); // Añadir mensaje para la música
+                if (personaje.vida <= 0 && personaje.estaVivo) personaje.estaVivo = false;
+            } else { 
+                dibujarGameOver();
+                if (botonReinicio && mouseX > botonReinicio.x && mouseX < botonReinicio.x + botonReinicio.width && mouseY > botonReinicio.y && mouseY < botonReinicio.y + botonReinicio.height) 
+                    canvas.style.cursor = 'pointer'; 
+                else 
+                    canvas.style.cursor = 'default';
+            }
+            ctx.restore();
+            requestAnimationFrame(dibujar);
+        }
+
+        precargarImagenes();
+    </script>
+</body>
+</html>
